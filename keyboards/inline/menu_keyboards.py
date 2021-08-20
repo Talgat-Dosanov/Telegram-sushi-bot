@@ -221,7 +221,7 @@ async def phoneNumber_markup():
     markup.row(
         InlineKeyboardButton(
             text='Принять',
-            callback_data='pickup'
+            callback_data='description'
         )
     )
     markup.row(

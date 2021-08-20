@@ -7,6 +7,7 @@ class NewItem(StatesGroup):
     Approval = State()
     Delivery = State()
     PhoneNumber = State()
+    Note = State()
 
 class AdminPanel(StatesGroup):
     Name = State()

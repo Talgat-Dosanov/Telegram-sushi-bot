@@ -358,7 +358,7 @@ async def order_info_command(call: CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(text_contains='delivery', state=states.NewItem.Approval)
 async def delivery_command(call: CallbackQuery):
     await call.message.edit_text('Введите адрес доставки\n'
-                                 '"<i>Например: ул. Советская, д.6, кв.3"</i>')
+                                 '"<i>Например: ул. Советская, д.6, кв. 3"</i>')
 
     await states.NewItem.Delivery.set()
 
@@ -416,10 +416,16 @@ async def process_pickup_command(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     user_id = data.get('user_id')
     print(user_id)
+
     phone_number = await PurchaseItem.select('phone_number').where(PurchaseItem.buyer == user_id).gino.scalar()
+    if phone_number == None:
+        phone_number = data.get('phone_number')
     await state.update_data(
         phone_number=phone_number
     )
+
+
+
     data = await state.get_data()
     purchase: models.PurchaseItem = data.get('purchase')
 
@@ -472,7 +478,7 @@ async def get_phone_number(message: types.Message, state: FSMContext):
     markup.row(
         InlineKeyboardButton(
             text='Принять',
-            callback_data='accept'
+            callback_data='description'
         )
     )
     markup.row(
@@ -500,6 +506,63 @@ async def change(call: CallbackQuery):
     await call.message.edit_text('Введите номер телефона заново: ')
     await states.NewItem.PhoneNumber.set()
 
+
+@dp.callback_query_handler(text_contains='description', state=states.NewItem.Approval)
+async def description_order(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    delivery_method = data.get('delivery_method')
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton(
+        text='Да',
+        callback_data='note'
+    )
+    )
+    if delivery_method == 'Самовывоз':
+        markup.row(InlineKeyboardButton(
+            text='Нет',
+            callback_data='pickup'
+        )
+        )
+    else:
+        markup.row(InlineKeyboardButton(
+            text='Нет',
+            callback_data='accept'
+        )
+        )
+    await call.message.answer('Добавить примечание к заказу?', reply_markup=markup)
+    await states.NewItem.Approval.set()
+
+@dp.callback_query_handler(text_contains='note', state=states.NewItem.Approval)
+async def enter_description(call: CallbackQuery):
+    await call.message.edit_text('Введите текст примечания')
+
+    await states.NewItem.Note.set()
+
+@dp.message_handler(state=states.NewItem.Note)
+async def save_note(message: types.Message, state: FSMContext):
+    text = message.text
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton(
+            text='ОК',
+            callback_data='accept'
+        )
+    )
+    markup.row(
+        InlineKeyboardButton(
+            text='Ввести заново',
+            callback_data='enter_again'
+        )
+    )
+    await message.answer(text=text, reply_markup=markup)
+    await state.update_data(note=text)
+    await states.NewItem.Approval.set()
+
+@dp.callback_query_handler(text_contains='enter_again', state=states.NewItem.Approval)
+async def enter_description(call: CallbackQuery):
+    await call.message.edit_text('Введите текст примечания')
+    await states.NewItem.Note.set()
+
 @dp.callback_query_handler(text_contains='accept', state=states.NewItem.Approval)
 async def send_admins(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -523,7 +586,8 @@ async def send_admins(call: CallbackQuery, state: FSMContext):
         amount=total_amount,
         shipping_address=data.get('shipping_address'),
         phone_number=str(data.get('phone_number')),
-        delivery_method=data.get('delivery_method')
+        delivery_method=data.get('delivery_method'),
+        note=data.get('note')
 
     ).apply()
     if purchase.delivery_method == 'Доставка':
@@ -533,7 +597,13 @@ async def send_admins(call: CallbackQuery, state: FSMContext):
                      f'☎ Номер телефона: {purchase.phone_number}\n' \
                      f'🚚 Адрес доставки: {purchase.shipping_address}\n' \
                      f'🛎 Заказ:\n' \
-                     f'{item_name}\n'
+                     f'{item_name}\n' \
+                     f'💵 Сумма заказа: {purchase.amount} руб\n' \
+                     f'💵 Сумма доставки: 100 руб\n' \
+                     f'💰 Итоговая сумма: {purchase.amount + 100} руб\n' \
+                     f'📜 Примечание к заказу:\n ' \
+                     f'{purchase.note}'
+
     else:
         order_info = f'Получен заказ №{purchase.id}!\n' \
                      f'👤 Имя заказчика: {purchase.receiver}\n' \
@@ -541,7 +611,12 @@ async def send_admins(call: CallbackQuery, state: FSMContext):
                      f'☎ Номер телефона: {purchase.phone_number}\n' \
                      f'🚚 Способ доставки: {purchase.delivery_method}\n' \
                      f'🛎 Заказ:\n' \
-                     f'{item_name}\n'
+                     f'{purchase.item_name}\n' \
+                     f'💰 Сумма заказа: {purchase.amount} руб\n' \
+                     f'📜 Примечание к заказу:\n ' \
+                     f'{purchase.note}'
+
+
 
     keyboard_for_admins = order_for_admins(int(purchase.buyer), order_id=purchase.id)
     await bot.send_message(chat_id=ADMINS[0], text=order_info, reply_markup=keyboard_for_admins)
@@ -572,7 +647,13 @@ async def accept_order(call: CallbackQuery, callback_data: dict):
                      f'☎ Номер телефона: {order.phone_number}\n' \
                      f'🚚 Адрес доставки: {order.shipping_address}\n' \
                      f'🛎 Заказ:\n' \
-                     f'{order.item_name}\n'
+                     f'{order.item_name}\n' \
+                     f'💵 Сумма заказа: {order.amount} руб\n' \
+                     f'💵 Сумма доставки: 100 руб\n' \
+                     f'💰 Итоговая сумма: {order.amount + 100} руб\n'\
+                     f'📜 Примечание к заказу:\n ' \
+                     f'{order.note}'
+
     else:
         order_info = f'Получен заказ №{order.id}!\n' \
                      f'👤 Имя заказчика: {order.receiver}\n' \
@@ -580,7 +661,10 @@ async def accept_order(call: CallbackQuery, callback_data: dict):
                      f'☎ Номер телефона: {order.phone_number}\n' \
                      f'🚚 Способ доставки: {order.delivery_method}\n' \
                      f'🛎 Заказ:\n' \
-                     f'{order.item_name}\n'
+                     f'{order.item_name}\n' \
+                     f'💰 Сумма заказа: {order.amount} руб\n' \
+                     f'📜 Примечание к заказу:\n ' \
+                     f'{order.note}'
 
     keyboard_ready = ready_keyboard(user_id, int(order_id))
     await call.message.edit_text(text=order_info, reply_markup=keyboard_ready)
@@ -600,7 +684,12 @@ async def send_ready_command(call: CallbackQuery, callback_data: dict):
                      f'☎ Номер телефона: {order.phone_number}\n' \
                      f'🚚 Адрес доставки: {order.shipping_address}\n' \
                      f'🛎 Заказ:\n' \
-                     f'{order.item_name}\n'
+                     f'{order.item_name}\n' \
+                     f'💵 Сумма заказа: {order.amount} руб\n' \
+                     f'💵 Сумма доставки: 100 руб\n' \
+                     f'💰 Итоговая сумма: {order.amount + 100} руб\n' \
+                     f'📜 Примечание к заказу:\n ' \
+                     f'{order.note}'
     else:
         order_info = f'Заказ №{order_id} Готов!\n' \
                      f'👤 Имя заказчика: {order.receiver}\n' \
@@ -608,10 +697,16 @@ async def send_ready_command(call: CallbackQuery, callback_data: dict):
                      f'☎ Номер телефона: {order.phone_number}\n' \
                      f'🚚 Способ доставки: {order.delivery_method}\n' \
                      f'🛎 Заказ:\n' \
-                     f'{order.item_name}\n'
+                     f'{order.item_name}\n' \
+                     f'💰 Сумма заказа: {order.amount} руб\n' \
+                     f'📜 Примечание к заказу:\n ' \
+                     f'{order.note}'
 
     await call.message.edit_text(text=order_info)
-    await call.bot.send_message(chat_id=user_id, text=f'Статус заказа {order.id}: Готов!')
+    if order.delivery_method == 'Доставка':
+        await call.bot.send_message(chat_id=user_id, text=f'Статус заказа {order.id}: Готов! Ожидайте доставку!')
+    else:
+        await call.bot.send_message(chat_id=user_id, text=f'Статус заказа {order.id}: Готов!')
     await call.bot.send_sticker(chat_id=user_id, sticker='CAACAgIAAxkBAAELJU5hCkFXMFQ4GokhJZrMBiZePzw4hwACHQADFkJrCoaz3LxWR4WIIAQ')
 # При желании можно подключить собственную платежную систему Telegram
 '''

@@ -51,6 +51,7 @@ class PurchaseItem(db.Model):
     shipping_address = Column(String(250))
     phone_number = Column(String(50))
     delivery_method = Column(String(50))
+    note = Column(String(300))
 
 class Photo(db.Model):
     __tablename__ = 'photo'
